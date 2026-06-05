@@ -1,0 +1,32 @@
+{
+  "name": "guardian-ledger-agent",
+  "version": "0.1.0",
+  "description": "Hardware-in-the-Loop Treasury Agent — AI agent with Ledger hardware signing guardrails",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "demo": "node -r dotenv/config dist/demo.js",
+    "spike": "node -r dotenv/config dist/spike-signing.js",
+    "start:speculos": "bash scripts/start-speculos.sh",
+    "start:demo": "bash scripts/run-demo.sh"
+  },
+  "keywords": ["ledger", "agent", "hardware-security", "ethereum", "treasury"],
+  "license": "MIT",
+  "pnpm": {
+    "onlyBuiltDependencies": ["keccak"]
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "ts-node": "^10.9.0"
+  },
+  "dependencies": {
+    "@ledgerhq/hw-transport-node-speculos": "^6.29.0",
+    "@ledgerhq/hw-app-eth": "^6.38.0",
+    "@ledgerhq/logs": "^6.12.0",
+    "ethers": "^6.13.0",
+    "dotenv": "^16.4.0",
+    "chalk": "^5.3.0",
+    "openai": "^4.47.0"
+  }
+}

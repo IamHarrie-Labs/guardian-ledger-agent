@@ -1,0 +1,65 @@
+name: Speculos Signing Demo
+
+on:
+  workflow_dispatch:  # manual trigger — run this to record the signing proof
+  push:
+    branches: [main]
+    paths: ['src/spike-signing.ts']
+
+jobs:
+  speculos-spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install Node deps
+        run: pnpm install
+
+      - name: Install Speculos
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+          pip install speculos
+
+      - name: Start Speculos (headless, background)
+        run: |
+          speculos ethereum-flex.elf \
+            --model flex \
+            --display headless \
+            --apdu-port 9999 \
+            --api-port 5000 \
+            --automation '{"version":1,"rules":[{"action":"button","args":{"btn":0,"delay":0.5}},{"action":"button","args":{"btn":0,"delay":0.5}}]}' &
+          echo "SPECULOS_PID=$!" >> $GITHUB_ENV
+          sleep 3
+
+      - name: Wait for Speculos API
+        run: |
+          for i in {1..10}; do
+            curl -sf http://127.0.0.1:5000/events && echo "Speculos up" && break
+            echo "Waiting... ($i/10)" && sleep 1
+          done
+
+      - name: Run signing spike
+        env:
+          SPECULOS_APDU_PORT: 9999
+        run: npx ts-node src/spike-signing.ts
+
+      - name: Screenshot device state
+        run: |
+          curl -s http://127.0.0.1:5000/screenshot > speculos-screen.png || true
+          echo "Screenshot saved"
+
+      - name: Upload screenshot as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: speculos-signing-proof
+          path: speculos-screen.png

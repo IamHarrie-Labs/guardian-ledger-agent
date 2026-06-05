@@ -1,0 +1,32 @@
+{
+  "name": "Guardian — Ledger Agent Stack",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
+  },
+
+  "onCreateCommand": "bash .devcontainer/setup.sh",
+  "postCreateCommand": "npm install -g pnpm && pnpm install",
+
+  "forwardPorts": [5000, 9999],
+  "portsAttributes": {
+    "5000": {
+      "label": "Speculos — Device Screen",
+      "onAutoForward": "openBrowser"
+    },
+    "9999": {
+      "label": "Speculos — APDU TCP",
+      "onAutoForward": "silent"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-vscode.vscode-typescript-next"],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
