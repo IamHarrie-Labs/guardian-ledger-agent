@@ -15,6 +15,7 @@ import chalk from "chalk";
 import { parseInstruction } from "./agent";
 import { evaluatePolicy, loadPolicyConfig } from "./policy";
 import { signAndBroadcast, getDeviceAddress } from "./signer";
+import { getDeviceInfoDMK } from "./dmk-device";
 
 const DIVIDER = chalk.gray("─".repeat(60));
 const policyConfig = loadPolicyConfig();
@@ -74,9 +75,10 @@ async function main() {
   console.log(chalk.bold.cyan("  Built with the Ledger Agent Stack | Sepolia testnet"));
   console.log(chalk.bold.cyan("══════════════════════════════════════════════════════════"));
 
-  // Confirm device is reachable first
-  console.log(chalk.cyan("\n[INIT] Verifying Speculos connection..."));
-  const deviceAddr = await getDeviceAddress();
+  // ── DMK: build + parse getAddress APDU with @ledgerhq/device-management-kit ──
+  console.log(chalk.cyan("\n[INIT] Connecting to Ledger device via DMK..."));
+  const deviceInfo = await getDeviceInfoDMK();
+  const deviceAddr = deviceInfo.address;
   console.log(chalk.green(`[INIT] ✓ Device ready — address: ${deviceAddr}`));
 
   // ── SCENE 1: Legitimate treasury transfer ──────────────────────────────────
@@ -115,6 +117,10 @@ async function main() {
   console.log(chalk.white("\n  AI can reason. AI can act. AI can be manipulated."));
   console.log(chalk.bold.white("  Ledger keeps humans in control.\n"));
   console.log(DIVIDER + "\n");
+
+  // Shut down the provider so ethers stops background polling
+  provider.destroy();
+  process.exit(0);
 }
 
 main().catch(console.error);

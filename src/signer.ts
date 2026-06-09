@@ -23,9 +23,8 @@ export interface SignedTx {
 }
 
 /**
- * Get the Ethereum address from the connected device/emulator.
- * This triggers "Verify address" on the Speculos screen — the first visible
- * proof of hardware-in-the-loop.
+ * Get the Ethereum address from the connected device/emulator (silent, no display).
+ * Used for init check and whitelist seeding.
  */
 export async function getDeviceAddress(): Promise<string> {
   console.log(
@@ -34,12 +33,108 @@ export async function getDeviceAddress(): Promise<string> {
   const transport = await SpeculosTransport.open({ apduPort: APDU_PORT });
   const eth = new Eth(transport);
 
-  console.log(chalk.cyan("[LEDGER] Requesting address — check Speculos screen..."));
-  const result = await eth.getAddress(DERIVATION_PATH, true); // true = display on device
-  console.log(chalk.green("[LEDGER] Address confirmed: " + result.address));
+  console.log(chalk.cyan("[LEDGER] Requesting address (silent)..."));
+  const result = await eth.getAddress(DERIVATION_PATH, false); // false = no display prompt
+  console.log(chalk.green("[LEDGER] ✓ Device address: " + result.address));
 
   await transport.close();
   return result.address;
+}
+
+/** Perform a left-swipe gesture on the Speculos touchscreen (advances Flex pages). */
+async function swipeLeft(API: string): Promise<void> {
+  // Press at right edge, release at left edge — simulates "swipe left to advance"
+  await fetch(`${API}/finger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ x: 380, y: 300, action: "press" }),
+  });
+  await new Promise((r) => setTimeout(r, 80));
+  await fetch(`${API}/finger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ x: 100, y: 300, action: "release" }),
+  });
+}
+
+/**
+ * Auto-approve a pending Speculos touchscreen confirmation.
+ *
+ * Ledger Flex Ethereum signing flow:
+ *   Page 1: "Review transaction" — swipe left
+ *   Page 2: Amount — swipe left
+ *   Page 3: Address — swipe left
+ *   Page 4: "Sign" / "Confirm" / "HOLD TO SIGN" button — tap it
+ *
+ * Strategy: swipe left until the review header is gone, then poll for the
+ * sign/confirm button and tap it.
+ */
+async function autoApproveSpeculos(): Promise<void> {
+  const API = `http://127.0.0.1:${process.env.SPECULOS_API_PORT ?? "5000"}`;
+  // Give Speculos time to render the first review page
+  await new Promise((r) => setTimeout(r, 1800));
+
+  const getTexts = async (): Promise<string[]> => {
+    try {
+      const res = await fetch(`${API}/events?stream=false`);
+      const data = (await res.json()) as { events: { text: string }[] };
+      // Take only the last 15 events — the /events endpoint accumulates history,
+      // so we slice the tail to see what's *currently* on screen
+      const recent = data.events.slice(-15);
+      return recent.map((e) => e.text.toLowerCase());
+    } catch {
+      return [];
+    }
+  };
+
+  // Phase 1: Swipe through all review pages (max 8 swipes to be safe)
+  for (let swipes = 0; swipes < 8; swipes++) {
+    const texts = await getTexts();
+    const pageMatch = texts.find((t) => /\d+ of \d+/.test(t));
+    if (!pageMatch) break; // No more paginated review — moved to final screen
+    const [cur, total] = pageMatch.match(/(\d+) of (\d+)/)!.slice(1).map(Number);
+    console.log(chalk.cyan(`[SPECULOS] Swiping review page ${cur} of ${total}...`));
+    if (cur >= total) break; // On last page — stop swiping, go to phase 2
+    await swipeLeft(API);
+    await new Promise((r) => setTimeout(r, 600));
+  }
+
+  // Phase 2: Poll for the Sign / Hold-to-Sign screen (max 15s)
+  for (let i = 0; i < 30; i++) {
+    const texts = await getTexts();
+    const isHoldToSign = texts.some((t) => t.includes("hold"));
+    const isSignScreen = isHoldToSign || texts.some(
+      (t) => t.includes("sign") || t.includes("confirm") || t.includes("approve") || t.includes("accept")
+    );
+    if (isSignScreen) {
+      if (isHoldToSign) {
+        // "Hold to sign" — Ledger Flex requires a press-and-hold gesture (~2s)
+        console.log(chalk.cyan("[SPECULOS] Hold-to-sign detected — sending hold gesture..."));
+        await fetch(`${API}/finger`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x: 240, y: 408, action: "press" }),
+        });
+        await new Promise((r) => setTimeout(r, 2200)); // hold for 2.2s
+        await fetch(`${API}/finger`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x: 240, y: 408, action: "release" }),
+        });
+      } else {
+        // Simple tap confirm
+        await fetch(`${API}/finger`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x: 240, y: 400, action: "press-and-release" }),
+        });
+      }
+      console.log(chalk.cyan("[SPECULOS] ✓ Sign gesture sent to touchscreen"));
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  console.log(chalk.yellow("[SPECULOS] Auto-approve timed out — device may need manual tap"));
 }
 
 /**
@@ -63,8 +158,12 @@ export async function signAndBroadcast(
 
     // 2. Build transaction — normalize to address to EIP-55 checksum
     const toChecksummed = ethers.getAddress(to.toLowerCase());
-    const nonce = await provider.getTransactionCount(from, "pending");
-    const feeData = await provider.getFeeData();
+    const skipBroadcast = process.env.SKIP_BROADCAST === "true";
+    // When skip-broadcast, use stub nonce/fees — saves an RPC round-trip in demo mode
+    const nonce = skipBroadcast ? 0 : await provider.getTransactionCount(from, "pending");
+    const feeData = skipBroadcast
+      ? { maxFeePerGas: ethers.parseUnits("20", "gwei"), maxPriorityFeePerGas: ethers.parseUnits("1", "gwei") }
+      : await provider.getFeeData();
     const value = ethers.parseEther(amountEth);
 
     const tx: ethers.TransactionLike = {
@@ -93,14 +192,18 @@ export async function signAndBroadcast(
     console.log(chalk.bold.yellow("\n[LEDGER] ► REVIEW ON SPECULOS SCREEN ◄"));
     console.log(chalk.yellow(`         To:     ${to}`));
     console.log(chalk.yellow(`         Amount: ${amountEth} ETH`));
-    console.log(chalk.yellow("         Approve or REJECT on the device now...\n"));
+    console.log(chalk.yellow("         Waiting for device approval...\n"));
 
-    // 4. Sign on device — this BLOCKS until approved/rejected on Speculos
-    const signature = await eth.signTransaction(
-      DERIVATION_PATH,
-      Buffer.from(unsignedBytes).toString("hex"),
-      null
-    );
+    // 4. Sign on device — blocks until approved/rejected on Speculos.
+    //    Concurrently auto-approve via the Speculos REST API so the demo runs unattended.
+    const [signature] = await Promise.all([
+      eth.signTransaction(
+        DERIVATION_PATH,
+        Buffer.from(unsignedBytes).toString("hex"),
+        null
+      ),
+      autoApproveSpeculos(),
+    ]);
 
     // 5. Attach signature
     console.log(chalk.green("[LEDGER] ✓ Signature received from device:"));

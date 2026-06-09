@@ -10,6 +10,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "paths": {
+      "@ledgerhq/device-management-kit": [
+        "./node_modules/@ledgerhq/device-management-kit/lib/types/index.d.ts"
+      ]
+    },
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true
